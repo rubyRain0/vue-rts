@@ -1,10 +1,15 @@
 <template>
-  <div class="unit-sprite" :style="style" @click="onClick">
-    <div class="unit-shadow"></div>
-    <div class="unit-body" :class="{ selected: isSelected }">
-      <div class="face face-top"></div>
-      <div class="face face-left"></div>
-      <div class="face face-right"></div>
+  <div
+    class="unit-sprite"
+    :class="{ 'unit-sprite--selected': isSelected }"
+    :style="style"
+    @click="() => onClick($event)"
+  >
+    <div class="unit-sprite__shadow"></div>
+    <div class="unit-sprite__body">
+      <div class="unit-sprite__face unit-sprite__face--top"></div>
+      <div class="unit-sprite__face unit-sprite__face--left"></div>
+      <div class="unit-sprite__face unit-sprite__face--right"></div>
     </div>
   </div>
 </template>
@@ -27,74 +32,76 @@ const style = computed(() => {
 
 const onClick = (event) => {
   event.stopPropagation();
-  store.dispatch('game/selectUnits', [props.unit.id]);
+  store.dispatch('events/clickUnit', props.unit.id);
 };
 </script>
 
-<style lang="scss" scoped>
-/* Спрайт: нижняя точка по центру совпадает с центром клетки */
+<style scoped lang="scss">
 .unit-sprite {
   position: absolute;
   width: 40px;
   height: 55px;
-  /* Сдвигаем так, чтобы низ спрайта (ноги) стоял в центре тайла */
   transform: translate(-50%, -100%);
   cursor: pointer;
-}
 
-/* Тень-эллипс под юнитом */
-.unit-shadow {
-  position: absolute;
-  left: 50%;
-  bottom: 0;
-  width: 34px;
-  height: 16px;
-  background: rgba(0, 0, 0, 0.35);
-  border-radius: 50%;
-  transform: translate(-50%, 50%);
-  filter: blur(1px);
-}
+  &:hover &__body {
+    transform: translateY(-2px);
+  }
 
-/* Тело: контейнер 40x40 — общий bounding box для трёх граней */
-.unit-body {
-  position: absolute;
-  left: 50%;
-  bottom: 8px;
-  width: 40px;
-  height: 40px;
-  margin-left: -20px; /* центрируем по горизонтали */
-  transition: transform 0.1s;
-}
+  &__shadow {
+    position: absolute;
+    left: 50%;
+    bottom: 0;
+    width: 34px;
+    height: 16px;
+    background: rgba(0, 0, 0, 0.35);
+    border-radius: 50%;
+    transform: translate(-50%, 50%);
+    filter: blur(1px);
+  }
 
-/* Верхняя грань — ромб 40x40 (по высоте ромба = 20px) */
-.face {
-  position: absolute;
-  inset: 0;
-}
+  &__body {
+    position: absolute;
+    left: 50%;
+    bottom: 8px;
+    width: 40px;
+    height: 40px;
+    margin-left: -20px;
+    transition: transform 0.1s;
+  }
 
-.face-top {
-  background: #e89c7c;
-  clip-path: polygon(50% 0, 100% 25%, 50% 50%, 0 25%);
-}
+  &__face {
+    position: absolute;
+    inset: 0;
 
-.face-left {
-  background: #8a3018;
-  clip-path: polygon(0 25%, 50% 50%, 50% 100%, 0 75%);
-}
+    &--top {
+      background: #e89c7c;
+      clip-path: polygon(50% 0, 100% 25%, 50% 50%, 0 25%);
+    }
 
-.face-right {
-  background: #b04a28;
-  clip-path: polygon(50% 50%, 100% 25%, 100% 75%, 50% 100%);
-}
+    &--left {
+      background: #8a3018;
+      clip-path: polygon(0 25%, 50% 50%, 50% 100%, 0 75%);
+    }
 
-/* Выделение — светлая обводка поверх всех граней */
-.unit-body.selected {
-  .face-top    { background: #ffd870; }
-  .face-left   { background: #b08020; }
-  .face-right  { background: #d0a040; }
-}
+    &--right {
+      background: #b04a28;
+      clip-path: polygon(50% 50%, 100% 25%, 100% 75%, 50% 100%);
+    }
+  }
 
-.unit-sprite:hover .unit-body {
-  transform: translateY(-2px);
+  &--selected {
+    .unit-sprite__face--top {
+      background: #ffd870;
+    }
+
+    .unit-sprite__face--left {
+      background: #b08020;
+    }
+
+    .unit-sprite__face--right {
+      background: #d0a040;
+    }
+  }
 }
 </style>

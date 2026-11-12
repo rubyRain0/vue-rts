@@ -2,79 +2,206 @@
   <div
     ref="viewportRef"
     class="game-viewport"
-    @contextmenu.prevent="onRightClick"
-    @click="onLeftClick"
-    @wheel.prevent="onWheel"
-    @mousedown="onMouseDown"
-    @mousemove="onMouseMove"
-    @mouseup="onMouseUp"
-    @mouseleave="onMouseUp"
+    @contextmenu.prevent="($event) => onRightClick($event)"
+    @wheel.prevent="($event) => onWheel($event)"
+    @mousedown="($event) => onMouseDown($event)"
+    @mousemove="($event) => onMouseMove($event)"
+    @mouseup="($event) => onMouseUp($event)"
+    @mouseleave="() => onMouseUp()"
   >
     <GameWorld />
 
-    <!-- Рамка выделения — рисуется поверх всего в экранных координатах -->
-    <div v-if="selectionRect" class="selection-rect" :style="selectionStyle"></div>
+    <!-- Хпбары: отдельный слой в экранных координатах, вне изометрии мира.
+         Видны только у объектов в фокусе — выделенных юнитов и выбранного здания -->
+    <HealthBar
+      v-for="unit in focusedUnits"
+      :key="'hp' + unit.id"
+      :hp="unit.hp"
+      :max-hp="unit.maxHp"
+      :screen="unit.screen"
+      :width="HEALTH_BAR.unitWidth"
+      :offset="HEALTH_BAR.unitOffset"
+      :style="{ zIndex: Z_INDEX.HEALTH_BAR }"
+    />
+    <HealthBar
+      v-for="b in focusedBuildings"
+      :key="'hpb' + b.id"
+      :hp="b.hp"
+      :max-hp="b.maxHp"
+      :screen="b.screen"
+      :width="b.width ?? b.size"
+      :offset="(b.height ?? b.size) / 4 + HEALTH_BAR.buildingOffset"
+      :style="{ zIndex: Z_INDEX.HEALTH_BAR }"
+    />
 
-    <div class="controls-panel">
-        <div class="row"><span class="key">↑ ↓ ← →</span><span class="desc">Камера</span></div>
-        <div class="row"><span class="key">Колесо</span><span class="desc">Зум</span></div>
-        <div class="row"><span class="key">ЛКМ</span><span class="desc">Выбрать юнита</span></div>
-        <div class="row"><span class="key">ЛКМ + drag</span><span class="desc">Выделить группу</span></div>
-        <div class="row"><span class="key">ПКМ</span><span class="desc">Отправить к цели</span></div>
+    <BuildPanel />
+    <StatsPanel />
+
+    <!-- Рамка выделения — рисуется поверх всего в экранных координатах -->
+    <div
+      v-if="selectionRect"
+      class="game-viewport__selection"
+      :style="selectionStyle"
+    ></div>
+    <div class="game-viewport__topbar">
+      <div class="game-viewport__game-info">
+        <span class="game-viewport__game-title">
+          {{ currentScenario?.name || "RTS Simulator" }}
+        </span>
+      </div>
+
+      <div class="game-viewport__game-actions">
+        <button class="game-viewport__action" @click="togglePause">
+          {{ isPaused ? "Продолжить" : "Пауза" }}
+        </button>
+
+        <button class="game-viewport__action" @click="openScenarioMenu">
+          Новая игра
+        </button>
+      </div>
+    </div>
+    <div
+      v-if="showScenarioMenu"
+      class="game-viewport__overlay game-viewport__overlay--start"
+    >
+      <div class="game-viewport__menu">
+        <h2 class="game-viewport__menu-title">Новая игра</h2>
+        <p class="game-viewport__menu-text">Выберите сценарий</p>
+
+        <select v-model="selectedScenarioId" class="game-viewport__select">
+          <option
+            v-for="scenario in SCENARIOS"
+            :key="scenario.id"
+            :value="scenario.id"
+          >
+            {{ scenario.name }}
+          </option>
+        </select>
+
+        <button
+          class="game-viewport__action game-viewport__action--primary"
+          @click="startScenario()"
+        >
+          Начать игру
+        </button>
+      </div>
+    </div>
+    <div v-if="isPaused && !showScenarioMenu" class="game-viewport__overlay">
+      <div class="game-viewport__menu">
+        <h2 class="game-viewport__menu-title">Пауза</h2>
+
+        <button
+          class="game-viewport__action game-viewport__action--primary"
+          @click="resumeGame"
+        >
+          Продолжить
+        </button>
+
+        <button
+          class="game-viewport__action"
+          @click="startScenario(currentScenarioId)"
+        >
+          Перезапустить сценарий
+        </button>
+
+        <button class="game-viewport__action" @click="openScenarioMenu">
+          Выбрать сценарий
+        </button>
+      </div>
+    </div>
+    <div class="game-viewport__controls" :style="controlsStyle">
+      <div class="game-viewport__row">
+        <span class="game-viewport__key">↑ ↓ ← → / WASD</span>
+        <span class="game-viewport__desc">Камера</span>
+      </div>
+      <div class="game-viewport__row">
+        <span class="game-viewport__key">Колесо</span>
+        <span class="game-viewport__desc">Зум</span>
+      </div>
+      <div class="game-viewport__row">
+        <span class="game-viewport__key">ЛКМ</span>
+        <span class="game-viewport__desc">Выбрать / поставить</span>
+      </div>
+      <div class="game-viewport__row">
+        <span class="game-viewport__key">ЛКМ + drag</span>
+        <span class="game-viewport__desc">Выделить группу</span>
+      </div>
+      <div class="game-viewport__row">
+        <span class="game-viewport__key">ПКМ</span>
+        <span class="game-viewport__desc">Идти / атаковать</span>
+      </div>
+      <div class="game-viewport__row">
+        <span class="game-viewport__key">Shift + ПКМ</span>
+        <span class="game-viewport__desc">Точка маршрута</span>
+      </div>
+      <div class="game-viewport__row">
+        <span class="game-viewport__key">Tab / Shift + Tab</span>
+        <span class="game-viewport__desc">Перебор юнитов</span>
+      </div>
     </div>
   </div>
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue';
-import { useStore } from 'vuex';
-import GameWorld from './GameWorld.vue';
-import { useGameLoop } from '@/composables/useGameLoop';
-import { useIsoMath } from '@/composables/useIsoMath';
-import {
-  MIN_ZOOM, MAX_ZOOM, CAMERA_SPEED, ISO_ROTATION_DEG, ISO_SCALE_Y
-} from '@/config/game';
+import { ref, computed, onMounted, onUnmounted } from "vue";
+import { useStore } from "vuex";
+import GameWorld from "./GameWorld.vue";
+import BuildPanel from "./BuildPanel.vue";
+import StatsPanel from "./StatsPanel.vue";
+import HealthBar from "./HealthBar.vue";
+import { useGameLoop } from "@/composables/useGameLoop";
+import { Z_INDEX, HEALTH_BAR } from "@/config/game";
+import { SCENARIOS } from "@/config/scenarios";
 
 const store = useStore();
-const viewportRef = ref(null);
-const { screenToWorld, worldToScreen } = useIsoMath();
+const selectedScenarioId = ref(SCENARIOS[0].id);
+const currentScenarioId = ref(null);
 
-const keys = {
-  w: false, a: false, s: false, d: false,
-  ArrowUp: false, ArrowDown: false, ArrowLeft: false, ArrowRight: false
+const showScenarioMenu = ref(true);
+const showPauseMenu = ref(false);
+
+const currentScenario = computed(() =>
+  SCENARIOS.find((item) => item.id === selectedScenarioId.value),
+);
+
+const startScenario = (scenarioId = selectedScenarioId.value) => {
+  const scenario = SCENARIOS.find((item) => item.id === scenarioId);
+
+  if (!scenario) return;
+
+  selectedScenarioId.value = scenario.id;
+  currentScenarioId.value = scenario.id;
+
+  store.dispatch("events/clearEvents");
+  store.dispatch("game/resetForScenario");
+  store.dispatch("map/loadScenario", scenario);
+
+  showScenarioMenu.value = false;
+  showPauseMenu.value = false;
 };
-const onKeyDown = (e) => { if (e.key in keys) keys[e.key] = true; };
-const onKeyUp   = (e) => { if (e.key in keys) keys[e.key] = false; };
 
-const RAD = ISO_ROTATION_DEG * Math.PI / 180;
-const ISO_COS = Math.cos(RAD);
-const ISO_SIN = Math.sin(RAD);
+const togglePause = () => {
+  store.dispatch("game/togglePause");
+};
 
-function screenDirToWorldDir(sx, sy) {
-  const unsquashedY = sy / ISO_SCALE_Y;
-  return {
-    x: sx * ISO_COS + unsquashedY * ISO_SIN,
-    y: unsquashedY * ISO_COS - sx * ISO_SIN
-  };
-}
+const openScenarioMenu = () => {
+  store.dispatch("game/setPaused", true);
+  showScenarioMenu.value = true;
+  showPauseMenu.value = false;
+};
 
+const resumeGame = () => {
+  store.dispatch("game/setPaused", false);
+  showPauseMenu.value = false;
+};
+
+const viewportRef = ref(null);
+
+const isPaused = computed(() => store.state.game.isPaused);
+
+// Пересчёт кадра целиком выполняется в сторе
 useGameLoop((dt) => {
-  let sx = 0, sy = 0;
-  if (keys.w || keys.ArrowUp)    sy -= 1;
-  if (keys.s || keys.ArrowDown)  sy += 1;
-  if (keys.a || keys.ArrowLeft)  sx -= 1;
-  if (keys.d || keys.ArrowRight) sx += 1;
-
-  if (sx || sy) {
-    const world = screenDirToWorldDir(sx, sy);
-    const len = Math.hypot(world.x, world.y) || 1;
-    const speed = CAMERA_SPEED * dt / store.state.game.camera.zoom;
-    store.dispatch('game/moveCamera', {
-      x: (world.x / len) * speed,
-      y: (world.y / len) * speed
-    });
-  }
-  store.dispatch('units/tick', dt);
+  store.dispatch("frame/run", dt);
 });
 
 const getScreenPoint = (event) => {
@@ -82,120 +209,120 @@ const getScreenPoint = (event) => {
   return { x: event.clientX - rect.left, y: event.clientY - rect.top };
 };
 
-//Выделение рамкой
-const selectionRect = ref(null);       // { x1, y1, x2, y2 } в экранных координатах
-let dragStart = null;
-let dragged = false;
+// Ввод -> события кадра
+const getGameKey = (event) => {
+  if (event.code.startsWith("Key")) {
+    return event.code.slice(3).toLowerCase();
+  }
+
+  return event.key;
+};
+
+// Элементы форм не перехватываем: в них Tab — навигация по интерфейсу
+const isFormElement = (element) =>
+  Boolean(element?.closest?.("input, select, textarea"));
+
+const onKeyDown = (event) => {
+  if (event.key === "Tab" && !isFormElement(event.target)) {
+    event.preventDefault();
+    store.dispatch("game/focusUnit", event.shiftKey ? -1 : 1);
+    return;
+  }
+
+  store.dispatch("events/keyDown", getGameKey(event));
+};
+
+const onKeyUp = (event) => {
+  store.dispatch("events/keyUp", getGameKey(event));
+};
 
 const onMouseDown = (event) => {
   if (event.button !== 0) return;
-  dragStart = getScreenPoint(event);
-  dragged = false;
+  store.dispatch("events/startDrag", getScreenPoint(event));
 };
 
 const onMouseMove = (event) => {
-  if (!dragStart) return;
-  const p = getScreenPoint(event);
-  if (Math.hypot(p.x - dragStart.x, p.y - dragStart.y) > 4) {
-    dragged = true;
-    selectionRect.value = {
-      x1: Math.min(dragStart.x, p.x),
-      y1: Math.min(dragStart.y, p.y),
-      x2: Math.max(dragStart.x, p.x),
-      y2: Math.max(dragStart.y, p.y)
-    };
-  }
+  const point = getScreenPoint(event);
+  store.dispatch("events/updateCursor", point);
+  store.dispatch("events/updateDrag", point);
 };
 
-const onMouseUp = () => {
-  if (!dragStart) return;
-
-  if (dragged && selectionRect.value) {
-    const { viewport, camera } = store.state.game;
-    const r = selectionRect.value;
-    const ids = [];
-    for (const u of store.state.units.units) {
-      const sp = worldToScreen(u.position, viewport, camera);
-      if (sp.x >= r.x1 && sp.x <= r.x2 && sp.y >= r.y1 && sp.y <= r.y2) {
-        ids.push(u.id);
-      }
-    }
-    store.dispatch('game/selectUnits', ids);
-  }
-
-  dragStart = null;
-  selectionRect.value = null;
+// Отпускание ЛКМ завершает выделение; ПКМ и mouseleave выделение не трогают
+const onMouseUp = (event) => {
+  if (event && event.button !== 0) return;
+  store.dispatch("events/endDrag");
 };
 
-const selectionStyle = computed(() => {
-  const r = selectionRect.value;
-  if (!r) return null;
-  return {
-    left:   `${r.x1}px`,
-    top:    `${r.y1}px`,
-    width:  `${r.x2 - r.x1}px`,
-    height: `${r.y2 - r.y1}px`
-  };
-});
-
-//ПКМ  команда 
 const onRightClick = (event) => {
-  const screen = getScreenPoint(event);
-  const target = screenToWorld(
-    screen.x, screen.y,
-    store.state.game.viewport,
-    store.state.game.camera
-  );
-  const ids = store.state.game.selectedUnitIds;
-  if (ids.length) {
-    store.dispatch('units/issueMoveCommand', { unitIds: ids, target });
-  }
-};
-
-// ЛКМ по пустому месту - сброс 
-const onLeftClick = () => {
-  if (dragged) { dragged = false; return; }
-  store.dispatch('game/selectUnits', []);
-};
-
-//  Зум колесом 
-const onWheel = (event) => {
-  const screen = getScreenPoint(event);
-  const { viewport, camera } = store.state.game;
-  const worldBefore = screenToWorld(screen.x, screen.y, viewport, camera);
-
-  const factor = event.deltaY > 0 ? 1 / 1.15 : 1.15;
-  const newZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, camera.zoom * factor));
-
-  const offsetX = screen.x - viewport.width / 2;
-  const offsetY = screen.y - viewport.height / 2;
-  const unscaledX = offsetX / newZoom;
-  const unsquashedY = offsetY / newZoom / ISO_SCALE_Y;
-  const wox = unscaledX * ISO_COS + unsquashedY * ISO_SIN;
-  const woy = unsquashedY * ISO_COS - unscaledX * ISO_SIN;
-
-  store.dispatch('game/setCamera', {
-    x: worldBefore.x - wox,
-    y: worldBefore.y - woy,
-    zoom: newZoom
+  store.dispatch("events/moveSelected", {
+    cursor: getScreenPoint(event),
+    isShift: event.shiftKey,
   });
 };
 
+const onWheel = (event) => {
+  store.dispatch("events/wheel", {
+    cursor: getScreenPoint(event),
+    deltaY: event.deltaY,
+  });
+};
+
+// Отрисовка состояния из стора
+const units = computed(() => store.state.map.units);
+const buildings = computed(() => store.state.map.buildings);
+// Игровое время кадра — зависимость для автоскрытия хпбара после урона
+const gameFrame = computed(() => store.state.game.frame);
+
+// Хпбар виден, если объект в фокусе (выделен) или недавно получал урон
+const isBarVisible = (object, isFocused) => {
+  if (isFocused) return true;
+  if (object.damagedAt === null) return false;
+  return (
+    (gameFrame.value.time - object.damagedAt) * 1000 <
+    HEALTH_BAR.damageVisibleMs
+  );
+};
+
+const focusedUnits = computed(() => {
+  const ids = store.state.game.selectedUnitIds;
+  return units.value.filter((u) => isBarVisible(u, ids.includes(u.id)));
+});
+
+const focusedBuildings = computed(() => {
+  const id = store.state.game.selectedBuildingId;
+  return buildings.value.filter((b) => isBarVisible(b, b.id === id));
+});
+
+const selectionRect = computed(() => store.getters["game/getSelectionRect"]);
+const selectionStyle = computed(() => ({
+  left: `${selectionRect.value.x1}px`,
+  top: `${selectionRect.value.y1}px`,
+  width: `${selectionRect.value.x2 - selectionRect.value.x1}px`,
+  height: `${selectionRect.value.y2 - selectionRect.value.y1}px`,
+  zIndex: Z_INDEX.SELECTION_RECT,
+}));
+
+const controlsStyle = { zIndex: Z_INDEX.CONTROLS_PANEL };
+
 const updateViewport = () => {
   const rect = viewportRef.value.getBoundingClientRect();
-  store.dispatch('game/setViewport', { width: rect.width, height: rect.height });
+  store.dispatch("game/setViewport", {
+    width: rect.width,
+    height: rect.height,
+  });
 };
 
 onMounted(() => {
-  window.addEventListener('keydown', onKeyDown);
-  window.addEventListener('keyup', onKeyUp);
-  window.addEventListener('resize', updateViewport);
+  window.addEventListener("keydown", onKeyDown);
+  window.addEventListener("keyup", onKeyUp);
+  window.addEventListener("resize", updateViewport);
   updateViewport();
 });
+
 onUnmounted(() => {
-  window.removeEventListener('keydown', onKeyDown);
-  window.removeEventListener('keyup', onKeyUp);
-  window.removeEventListener('resize', updateViewport);
+  window.removeEventListener("keydown", onKeyDown);
+  window.removeEventListener("keyup", onKeyUp);
+  window.removeEventListener("resize", updateViewport);
 });
 </script>
 
@@ -207,46 +334,144 @@ onUnmounted(() => {
   background: #c0c0c0;
   user-select: none;
   cursor: crosshair;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-}
+  font-family:
+    -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
 
-.selection-rect {
-  position: absolute;
-  border: 2px solid rgba(80, 180, 255, 0.9);
-  background: rgba(80, 180, 255, 0.18);
-  pointer-events: none;
-  z-index: 50;
-}
+  &__selection {
+    position: absolute;
+    border: 2px solid rgba(80, 180, 255, 0.9);
+    background: rgba(80, 180, 255, 0.18);
+    pointer-events: none;
+  }
 
-.controls-panel {
-  position: absolute;
-  top: 24px;
-  right: 24px;
-  padding: 1.2vw 1.6vw;
-  background: rgba(15, 15, 15, 0.82);
-  color: #e8e8e8;
-  border-radius: 10px;
-  font-size: clamp(18px, 1vw, 30px);
-  line-height: 1.9;
-  min-width: clamp(320px, 20vw, 520px);
-  pointer-events: none;
-  z-index: 100;
-  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.4);
+  &__controls {
+    position: absolute;
+    top: 90px;
+    right: 24px;
+    padding: 1vw 1.3vw;
+    background: rgba(15, 15, 15, 0.82);
+    color: #e8e8e8;
+    border-radius: 10px;
+    font-size: clamp(16px, 0.9vw, 27px);
+    line-height: 1.75;
+    min-width: clamp(300px, 18.5vw, 480px);
+    pointer-events: none;
+    box-shadow: 0 6px 24px rgba(0, 0, 0, 0.4);
+  }
 
-  .row {
+  &__row {
     display: flex;
     justify-content: space-between;
-    gap: 1.5vw;
+    gap: 1.2vw;
     white-space: nowrap;
   }
 
-  .key {
+  &__key {
     color: #a0d0ff;
     font-weight: 600;
   }
 
-  .desc {
+  &__desc {
     color: #d0d0d0;
+  }
+
+  &__topbar {
+    position: absolute;
+    top: 16px;
+    left: 16px;
+    right: 16px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 16px;
+    background: rgba(15, 15, 15, 0.88);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 10px;
+    color: #e8e8e8;
+    z-index: 100;
+  }
+
+  &__game-title {
+    font-size: 17px;
+    font-weight: 600;
+  }
+
+  &__game-actions {
+    display: flex;
+    gap: 8px;
+  }
+
+  &__action {
+    padding: 9px 14px;
+    border: 1px solid #555;
+    border-radius: 7px;
+    background: #252525;
+    color: #e8e8e8;
+    font-size: 14px;
+    cursor: pointer;
+
+    &:hover {
+      background: #414141;
+    }
+
+    &--primary {
+      background: #315779;
+      border-color: #6b9bc8;
+
+      &:hover {
+        background: #3d719e;
+      }
+    }
+  }
+
+  &__overlay {
+    position: absolute;
+    inset: 0;
+    z-index: 200;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 0, 0, 0.45);
+    pointer-events: auto;
+
+    &--start {
+      align-items: flex-start;
+      justify-content: center;
+      padding-top: 100px;
+    }
+  }
+
+  &__menu {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    width: min(380px, calc(100% - 32px));
+    padding: 28px;
+    background: #202020;
+    border: 1px solid #555;
+    border-radius: 12px;
+    color: #e8e8e8;
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+  }
+
+  &__menu-title {
+    margin: 0;
+    font-size: 24px;
+  }
+
+  &__menu-text {
+    margin: 0;
+    color: #aaa;
+  }
+
+  &__select {
+    width: 100%;
+    padding: 11px;
+    border: 1px solid #555;
+    border-radius: 7px;
+    background: #303030;
+    color: #eee;
+    font-size: 15px;
   }
 }
 </style>
