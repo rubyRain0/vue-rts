@@ -1,42 +1,96 @@
 <template>
   <div class="game-world" :style="worldStyle">
-    <div class="outer-ground"></div>
-    <div class="game-ground" :style="groundStyle"></div>
+    <div class="game-world__outer-ground"></div>
+    <div class="game-world__ground" :style="groundStyle"></div>
 
-    <BuildingItem
-      v-for="b in buildings"
-      :key="b.id"
-      :building="b"
-    />
+    <TerrainLayer />
+
+    <!-- Маршрут юнита: прерывистая линия до конца пути. Рисуется только пока маршрут есть -->
+    <template v-for="route in unitRoutes" :key="'p' + route.id">
+      <div
+        v-for="(segment, index) in route.segments"
+        :key="'p' + route.id + '-' + index"
+        class="game-world__path-line"
+        :style="segment"
+      ></div>
+    </template>
 
     <div
-      v-for="unit in unitsWithTarget"
-      :key="'p' + unit.id"
-      class="path-line"
-      :style="pathStyle(unit)"
+      v-if="ghost"
+      class="game-world__ghost"
+      :class="{ 'game-world__ghost--invalid': !ghost.valid }"
+      :style="ghostStyle"
     ></div>
 
-    <UnitItem
-      v-for="unit in units"
-      :key="unit.id"
-      :unit="unit"
-    />
+    <!-- Здания -->
+    <BuildingItem v-for="b in buildings" :key="b.id" :building="b" />
+
+    <!-- Водные юниты -->
+    <UnitItem v-for="unit in waterUnits" :key="unit.id" :unit="unit" />
+
+
+    <!-- Наземные юниты -->
+    <UnitItem v-for="unit in landUnits" :key="unit.id" :unit="unit" />
   </div>
+  <Teleport to="body">
+    <div v-if="isGameOver" class="game-result-overlay">
+      <div class="game-result-overlay__panel">
+        <h2 v-if="!isDraw">Победила группа: {{ winnerGroup }}</h2>
+        <h2 v-else>Ничья!</h2>
+
+        <p>Матч завершён</p>
+        <button
+          class="game-result-overlay__button"
+          @click="emit('back-to-menu')"
+        >
+          В меню сценариев
+        </button>
+      </div>
+    </div>
+  </Teleport>
 </template>
 
 <script setup>
-import { computed } from 'vue';
-import { useStore } from 'vuex';
-import UnitItem from './UnitItem.vue';
-import BuildingItem from './BuildingItem.vue';
+import { computed } from "vue";
+import { useStore } from "vuex";
+import UnitItem from "./UnitItem.vue";
+import BuildingItem from "./BuildingItem.vue";
 import {
-  GRID_STEP, MAP_SIZE, ISO_ROTATION_DEG, ISO_SCALE_Y
-} from '@/config/game';
+  GRID_STEP,
+  MAP_SIZE,
+  ISO_ROTATION_DEG,
+  ISO_SCALE_Y,
+  Z_INDEX,
+} from "@/config/game";
+import TerrainLayer from "./terrain/TerrainLayer.vue";
 
 const store = useStore();
-const units = computed(() => store.state.units.units);
-const buildings = computed(() => store.state.units.buildings);
-const unitsWithTarget = computed(() => units.value.filter(u => u.target));
+const units = computed(() => store.state.map.units);
+const buildings = computed(() => store.state.map.buildings);
+
+const isGameOver = computed(() => store.state.game.isGameOver);
+const winnerGroup = computed(() => store.state.game.winnerGroup);
+const isDraw = computed(() => store.state.game.isDraw);
+
+const emit = defineEmits(["back-to-menu"]);
+
+const waterUnits = computed(() =>
+  units.value.filter((unit) => unit.movementType === "water"),
+);
+
+const landUnits = computed(() =>
+  units.value.filter((unit) => unit.movementType !== "water"),
+);
+
+// Оставшийся маршрут каждого юнита в виде отрезков для отрисовки.
+const unitRoutes = computed(() => {
+  const getPathSegments = store.getters["map/getPathSegments"];
+
+  return units.value
+    .filter((unit) => unit.target || (unit.path && unit.path.length > 0))
+    .map((unit) => ({ id: unit.id, segments: getPathSegments(unit) }))
+    .filter((route) => route.segments.length > 0);
+});
 
 const worldStyle = computed(() => {
   const { viewport, camera } = store.state.game;
@@ -48,31 +102,48 @@ const worldStyle = computed(() => {
       `scale(${camera.zoom}) ` +
       `scale(1, ${ISO_SCALE_Y}) ` +
       `rotate(${ISO_ROTATION_DEG}deg) ` +
-      `translate(${-camera.x}px, ${-camera.y}px)`
+      `translate(${-camera.x}px, ${-camera.y}px)`,
   };
 });
 
 const groundStyle = computed(() => ({
-  left:   `${-MAP_SIZE / 2}px`,
-  top:    `${-MAP_SIZE / 2}px`,
-  width:  `${MAP_SIZE}px`,
+  left: `${-MAP_SIZE / 2}px`,
+  top: `${-MAP_SIZE / 2}px`,
+  width: `${MAP_SIZE}px`,
   height: `${MAP_SIZE}px`,
-  backgroundSize: `${GRID_STEP}px ${GRID_STEP}px`
+  backgroundSize: `${GRID_STEP}px ${GRID_STEP}px`,
 }));
 
-const pathStyle = (unit) => {
-  const dx = unit.target.x - unit.position.x;
-  const dy = unit.target.y - unit.position.y;
-  const len = Math.hypot(dx, dy);
-  const angle = Math.atan2(dy, dx) * 180 / Math.PI;
+// Призрак здания под курсором в режиме строительства
+const ghost = computed(() => {
+  const type = store.state.game.buildType;
+  if (!type) return null;
+
+  const horizontal =
+    type.type === "ship" && store.state.game.buildOrientation === "horizontal";
+
+  const orientedType = horizontal
+    ? { ...type, width: type.height, height: type.width }
+    : type;
+
+  return store.getters["map/getGhost"](
+    store.getters["game/getCursorWorld"],
+    orientedType,
+  );
+});
+
+const ghostStyle = computed(() => {
+  const g = ghost.value;
+  if (!g) return {};
+
   return {
-    left: `${unit.position.x}px`,
-    top: `${unit.position.y}px`,
-    width: `${len}px`,
-    transform: `rotate(${angle}deg)`,
-    transformOrigin: '0 50%'
+    left: `${g.x - g.width / 2}px`,
+    top: `${g.y - g.height / 2}px`,
+    width: `${g.width}px`,
+    height: `${g.height}px`,
+    zIndex: Z_INDEX.GHOST,
   };
-};
+});
 </script>
 
 <style scoped lang="scss">
@@ -84,33 +155,111 @@ const pathStyle = (unit) => {
   height: 0;
   transform-origin: 0 0;
   will-change: transform;
+
+  &__outer-ground {
+    position: absolute;
+    left: -20000px;
+    top: -20000px;
+    width: 40000px;
+    height: 40000px;
+    background: #c0c0c0;
+    pointer-events: none;
+  }
+
+  &__ground {
+    position: absolute;
+    background-color: #557747;
+    background-image:
+      radial-gradient(
+        ellipse at 20% 30%,
+        rgba(139, 160, 91, 0.28) 0%,
+        transparent 38%
+      ),
+      radial-gradient(
+        ellipse at 75% 65%,
+        rgba(35, 83, 43, 0.25) 0%,
+        transparent 42%
+      ),
+      radial-gradient(
+        ellipse at 45% 85%,
+        rgba(173, 157, 94, 0.16) 0%,
+        transparent 35%
+      ),
+      repeating-radial-gradient(
+        circle at 30% 40%,
+        rgba(255, 255, 255, 0.025) 0px,
+        rgba(255, 255, 255, 0.025) 2px,
+        transparent 3px,
+        transparent 7px
+      );
+    border: 1px solid rgba(0, 0, 0, 0.6);
+    box-sizing: border-box;
+    pointer-events: none;
+  }
+
+  &__path-line {
+    position: absolute;
+    height: 0;
+    border-top: 2px dashed rgba(255, 220, 80, 0.65);
+    pointer-events: none;
+  }
+
+  &__ghost {
+    position: absolute;
+    background: rgba(110, 220, 130, 0.35);
+    border: 2px solid rgba(80, 200, 100, 0.9);
+    box-sizing: border-box;
+    pointer-events: none;
+
+    &--invalid {
+      background: rgba(230, 90, 90, 0.35);
+      border-color: rgba(220, 70, 70, 0.9);
+    }
+  }
+}
+.game-result-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.7);
+
+  &__panel {
+    padding: 32px 48px;
+    background: #252525;
+    border: 2px solid #777;
+    border-radius: 12px;
+    color: #fff;
+    text-align: center;
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+
+    h2 {
+      margin: 0 0 12px;
+      font-size: 28px;
+    }
+
+    p {
+      margin: 0;
+      color: #bbb;
+      font-size: 16px;
+    }
+  }
 }
 
-.outer-ground {
-  position: absolute;
-  left: -20000px;
-  top: -20000px;
-  width: 40000px;
-  height: 40000px;
-  background: #c0c0c0;
-  pointer-events: none;
-}
+.game-result-overlay__button {
+  margin-top: 20px;
+  padding: 10px 18px;
+  background: #315779;
+  border: 1px solid #6b9bc8;
+  border-radius: 7px;
+  color: #fff;
+  font-size: 15px;
+  cursor: pointer;
 
-.game-ground {
-  position: absolute;
-  background-color: #3a3a3a;
-  background-image:
-    linear-gradient(rgba(255, 255, 255, 0.32) 2px, transparent 2px),
-    linear-gradient(90deg, rgba(255, 255, 255, 0.32) 2px, transparent 2px);
-  border: 1px solid rgba(0, 0, 0, 0.6);
-  box-sizing: border-box;
-  pointer-events: none;
-}
-
-.path-line {
-  position: absolute;
-  height: 0;
-  border-top: 2px dashed rgba(255, 220, 80, 0.65);
-  pointer-events: none;
+  &:hover {
+    background: #3d719e;
+  }
 }
 </style>
